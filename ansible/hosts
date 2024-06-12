@@ -1,0 +1,11 @@
+[rke2-servers-masters]
+rkecontrolplane0.carbide.aws.j2rsolutions.com ansible_user=ec2-user
+
+[rke2-servers]
+
+[rke2-agents]
+
+[sandbox]
+
+[offline_rancher_bootstrap]
+rkebastion0.carbide.aws.j2rsolutions.com

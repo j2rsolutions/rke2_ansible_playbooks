@@ -1,0 +1,12 @@
+module myapp 1.0;
+
+require {
+	type container_log_t;
+	type container_t;
+	type etc_t;
+	class dir { read write };
+}
+
+#============= container_t ==============
+allow container_t container_log_t:dir read;
+allow container_t etc_t:dir write;

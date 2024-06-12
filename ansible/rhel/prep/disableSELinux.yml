@@ -1,0 +1,10 @@
+---
+  - name: disable SELinux
+    hosts: all
+    become_user: root
+    become: true
+    tasks:
+
+    - name: Disable SELinux
+      ansible.posix.selinux:
+        state: disabled

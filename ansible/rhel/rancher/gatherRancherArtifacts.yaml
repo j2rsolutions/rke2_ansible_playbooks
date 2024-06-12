@@ -1,0 +1,126 @@
+- name: Download Rancher Artifacts
+  hosts: offline_rancher_bootstrap
+  become: yes
+  vars:
+    rancher_version: "v2.6.10"
+    rancher_base_url: "https://github.com/rancher/rancher/releases/download/{{ rancher_version }}"
+    rancher_artifacts:
+      - "rancher-save-images.sh"
+      - "sha256sum.txt"
+      - "rancher-images.txt"
+      - "rancher-load-images.sh"
+      - "rancher-images-digests-linux-amd64.txt"
+    download_path: "/rkedata/rancher-artifacts"  # Default download path
+    max_retries: 30  # Adjust as necessary
+    delay_seconds: 20  # Adjust as necessary
+    prefix: "docker.io/"  # Default prefix, can be overridden
+
+  tasks:
+
+    - name: Install Git and Docker CLI
+      yum:
+        name:
+          - git
+          - docker
+        state: present
+
+    - name: Create download directory
+      file:
+        path: "{{ download_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Rancher artifacts
+      get_url:
+        url: "{{ rancher_base_url }}/{{ item }}"
+        dest: "{{ download_path }}/{{ item }}"
+      loop: "{{ rancher_artifacts }}"
+
+    - name: Prefix lines in rancher-images.txt
+      block:
+        - name: Read contents of rancher-images.txt
+          shell: cat "{{ download_path }}/rancher-images.txt"
+          register: rancher_images_content
+          changed_when: false
+
+        - name: Apply prefix to each line
+          lineinfile:
+            path: "{{ download_path }}/rancher-images.txt"
+            regexp: '^(?!{{ prefix }})(.*)$'
+            line: "{{ prefix }}\\1"
+            backrefs: yes
+          loop: "{{ rancher_images_content.stdout_lines }}"
+          when: rancher_images_content.stdout_lines is defined and rancher_images_content.stdout_lines | length > 0
+      when: "'rancher-images.txt' in rancher_artifacts"
+
+
+
+    - name: Ensure scripts are executable
+      file:
+        path: "{{ download_path }}/{{ item }}"
+        mode: '0755'
+      loop:
+        - "rancher-save-images.sh"
+        - "rancher-load-images.sh"
+
+    - name: Check if Helm is installed
+      command: /root/bin/helm version --short
+      register: helm_version_check
+      ignore_errors: true
+
+    - name: Download Helm installation script
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+      when: helm_version_check is failed
+
+    - name: Execute Helm installation script
+      ansible.builtin.shell: /tmp/get_helm.sh
+      args:
+        executable: /bin/bash
+      when: helm_version_check is failed
+      ignore_errors: true
+
+    - name: Create /root/bin directory if it doesn't exist
+      ansible.builtin.file:
+        path: /root/bin
+        state: directory
+        mode: '0755'
+      when: helm_version_check is failed
+
+    - name: Copy Helm binary to /root/bin
+      ansible.builtin.command: cp /usr/local/bin/helm /root/bin/helm
+      ignore_errors: true
+      when: helm_version_check is failed
+
+    - name: Add jetstack repository
+      shell: /root/bin/helm repo add jetstack https://charts.jetstack.io
+
+    - name: Update Helm repositories
+      shell: /root/bin/helm repo update
+
+    - name: Fetch cert-manager chart
+      shell: /root/bin/helm fetch jetstack/cert-manager
+      register: fetch_cert_manager
+      ignore_errors: yes
+
+    - name: Extract cert-manager version from fetched chart
+      set_fact:
+        cert_manager_version: "{{ fetch_cert_manager.stdout | regex_search('cert-manager-(.+?)\\.tgz') }}"
+
+    - name: Extract and append cert-manager images to rancher-images.txt
+      shell: /root/bin/helm template ./cert-manager-{{ cert_manager_version }}.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> {{ download_path }}/rancher-images.txt
+      args:
+        executable: /bin/bash
+
+    - name: Sort and remove duplicate entries from rancher-images.txt
+      command: sort -u {{ download_path }}/rancher-images.txt -o {{ download_path }}/rancher-images.txt
+
+    - name: Run the rancher-save-images.sh script in the background
+      ansible.builtin.shell: nohup ./rancher-save-images.sh >> rancher-save-images.log 2>&1 &
+      args:
+        chdir: "{{ download_path }}"
+        executable: /bin/bash
+        creates: "{{ download_path }}/rancher-save-images.log"
+

@@ -1,0 +1,125 @@
+---
+  - name: Install rke2 server service
+    hosts: rke2-servers-masters
+    become_user: root
+    become: true
+    tasks:
+
+      # Ubuntu uses APT for package management. The RKE2 installation on Ubuntu can be done using a script.
+      - name: Install RKE2 server using the install script (Ubuntu)
+        ansible.builtin.shell: curl -sfL https://get.rke2.io | sh -
+        args:
+          executable: /bin/bash
+        tags:
+          - a
+
+      - name: Install the latest version of nftables (Ubuntu)
+        ansible.builtin.apt:
+          name: nftables
+          state: latest
+          update_cache: yes
+        tags:
+          - a
+
+      # Ubuntu does not use firewalld by default; it uses UFW. You may need to adjust firewall settings accordingly.
+      - name: Start and enable nftables
+        ansible.builtin.systemd:
+          name: nftables 
+          state: started
+          enabled: yes
+        tags:
+          - a
+
+      - name: Ensure RKE2 directories are present
+        file:
+          path: "{{ item }}"
+          state: directory
+        loop:
+          - /etc/rancher/rke2
+          - /etc/sysconfig
+        tags:
+          - a
+
+      - name: Create necessary files for RKE2 configuration
+        file:
+          path: "{{ item }}"
+          state: touch
+        loop:
+          - /etc/rancher/rke2/config.yaml
+          - /etc/sysconfig/rke2-server
+        tags:
+          - a
+          
+      - name: Configure RKE2 server
+        ansible.builtin.blockinfile:
+          path: "{{ item.path }}"
+          state: present
+          block: "{{ item.block }}"
+        loop:
+          - path: /etc/rancher/rke2/config.yaml
+            block: |
+              write-kubeconfig-mode: "0644"
+              # ... other configurations ...
+          - path: /etc/sysconfig/rke2-server
+            block: |
+              HOME=/root-
+              no_proxy=.example.com,169.254.169.254,10.0.0.0/24, 172.0.0.0/16
+        tags:
+          - a
+          - config
+
+      - name: Enable and start rke2-server service
+        ansible.builtin.systemd:
+          name: rke2-server
+          state: started
+          enabled: yes
+        tags:
+          - a
+          - service
+
+      # Additional tasks like dumping journalctl, exporting node-token, etc., remain the same.
+
+
+
+      # journalctl -u rke2-server -f
+
+      - name: dump jounralctl for rke2-server
+        ansible.builtin.shell: 'journalctl -u rke2-server'
+        register: output
+        tags:
+          - a
+
+      - name: print journalctl output
+        ansible.builtin.debug:
+          var: output
+          verbosity: 2
+        tags:
+          - a
+
+      - name: export node-token
+        ansible.builtin.shell: 'cat /var/lib/rancher/rke2/server/node-token'  
+        register: node_token
+        tags:
+          - b
+
+      - name: Prints two lines of messages, but only if there is an environment value set
+        ansible.builtin.debug:
+          msg:
+            - Node token = '{{ node_token.stdout }}'
+        tags:
+          - b
+
+      - name: restart service rke2-server.service 
+        ansible.builtin.systemd:
+          name:  rke2-server
+          state: restarted
+        tags:
+            - x
+
+      - name: Create a symbolic link
+        ansible.builtin.file:
+          src: /var/lib/rancher/rke2/data/v1.18.20-rke2r1-8bc512ab9465/bin/kubectl
+          dest: /usr/bin/kubectl
+          owner: root 
+          group: root
+          state: link

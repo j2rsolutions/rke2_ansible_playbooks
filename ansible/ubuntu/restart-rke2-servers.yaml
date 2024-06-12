@@ -1,0 +1,26 @@
+---
+  - name: restart rke2 server service
+    hosts: rke2-servers, rke2-servers-masters
+    become_user: root
+    become: true
+    tasks:
+      - name: Restart rke2-server service
+        ansible.builtin.systemd:
+          name: rke2-server
+          state: restarted
+        tags: 
+          - restarted
+
+      - name: Stop rke2-server service
+        ansible.builtin.systemd:
+          name: rke2-server
+          state: stopped
+        tags: 
+          - stopped
+
+      - name: Start rke2-server service
+        ansible.builtin.systemd:
+          name: rke2-server
+          state: started
+        tags: 
+          - started

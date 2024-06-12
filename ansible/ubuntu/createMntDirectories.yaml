@@ -1,0 +1,25 @@
+---
+    - name: create /mnt directories 
+      hosts: rke2-servers, rke2-servers-masters, rke2-agents
+      become_user: root
+      become: true
+      tasks:
+
+      - name: Create a directory if it does not exist
+        ansible.builtin.file:
+          path: "{{ item }}"
+          state: directory
+          mode: '0755'
+        loop:
+          - /mnt/pan-local1 
+          - /mnt/pan-local2
+          - /mnt/pan-local3
+          - /mnt/pan-local4
+          - /mnt/pan-local5
+          - /mnt/pan-local6 
+          - /mnt/twistlock
+          - /rkedata/twistlock
+          - /rkedata/jira
+
+
+#ubuntu compatible 

@@ -1,0 +1,186 @@
+---
+  - name: Get kubernertes cluster info
+    hosts: rke2-servers-masters
+    become: true
+    tasks:
+
+    - name: Ensure Python 3 is installed (Debian-based)
+      apt:
+        name: python3
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure Python 3 is installed (Red Hat-based)
+      yum:
+        name: python3
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure pip3 is installed (Debian-based)
+      apt:
+        name: python3-pip
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure pip3 is installed (Red Hat-based)
+      yum:
+        name: python3-pip
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install bottle python package
+      pip:
+        name: bottle
+        executable: pip3
+
+    - name: Install bottle python package
+      ansible.builtin.pip:
+        name: kubernetes
+
+    - name: Create a k8s namespace
+      kubernetes.core.k8s:
+        name: cattle-system
+        api_version: v1
+        kind: Namespace
+        state: present
+        kubeconfig: /etc/rancher/rke2/rke2.yaml
+
+
+    - name: Ensure destination directory exists
+      ansible.builtin.file:
+        path: /opt/rkeSecrets
+        state: directory
+        mode: '0755'  # Adjust permissions as necessary
+
+
+    - name: Copy non cluster baseline .conf directories to DMC's apps directory
+      copy:
+        src: "/Users/jonathanspigler/J2RGit/ObsidianFlow/secrets/rancher/"
+        dest: "/opt/rkeSecrets/"
+        owner: root
+        group: root
+        mode: 0755
+        remote_src: no  # Ensure this is set to no since src is on the local/Ansible controller machine
+
+
+
+    - name: Copy ca-secret.yaml to destination server
+      ansible.builtin.copy:
+        src: /Users/jonathanspigler/J2RGit/ObsidianFlow/manifests/rancher/ca-secret.yaml
+        dest: /opt/rkeSecrets/ca-secret.yaml
+        owner: root  # Set owner as necessary
+        group: root  # Set group as necessary
+        mode: '0644'  # Adjust permissions as necessary
+
+    - name: Copy ingress-secret.yaml to destination server
+      ansible.builtin.copy:
+        src: /Users/jonathanspigler/J2RGit/ObsidianFlow/manifests/rancher/ingress-secret.yaml
+        dest: /opt/rkeSecrets/ingress-secret.yaml
+        owner: root  # Set owner as necessary
+        group: root  # Set group as necessary
+        mode: '0644'  # Adjust permissions as necessary
+
+
+    - name: Create private CA secret and ingress tls secret
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: /etc/rancher/rke2/rke2.yaml
+        src: "{{ item }}"
+      with_items:
+        - /opt/rkeSecrets/ca-secret.yaml
+        - /opt/rkeSecrets/ingress-secret.yaml
+      tags:
+        - secrets
+
+
+    - name: Update PATH environment for this session
+      lineinfile:
+        path: /etc/environment
+        line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'
+        create: yes
+      become: yes
+
+    - name: Refresh environment variables
+      shell: source /etc/environment
+      args:
+        executable: /bin/bash
+
+    - name: Download and install Helm
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0755'
+
+    - name: Install Helm
+      command: /tmp/get_helm.sh
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+    - name: Verify Helm installation
+      command: /usr/local/bin/helm version --short
+      register: helm_version
+      failed_when: helm_version.rc != 0
+
+    - name: Output Helm version
+      debug:
+        msg: "Helm version installed: {{ helm_version.stdout }}"
+
+    - name: Check if /usr/bin/helm is a symlink
+      stat:
+        path: /usr/bin/helm
+      register: ansible_file
+      become: yes
+
+    - name: Remove existing Helm binary from /usr/bin if it's not a symlink
+      file:
+        path: /usr/bin/helm
+        state: absent
+      become: yes
+      when: not ansible_file.stat.islnk
+
+    - name: Create symlink for Helm in /usr/bin
+      file:
+        src: /usr/local/bin/helm
+        dest: /usr/bin/helm
+        state: link
+      become: yes
+
+
+    - name: List Helm repositories to check if the required repo is added
+      command: helm repo list
+      register: helm_repo_list
+      ignore_errors: yes
+
+    - name: Show Helm repositories
+      debug:
+        var: helm_repo_list.stdout_lines
+      tags:
+        - helm
+
+
+    - name: Add stable rancher repo
+      kubernetes.core.helm_repository:
+        name: rancher-latest  # Ensure the name matches the one used in the upgrade/install commands.
+        repo_url: "https://releases.rancher.com/server-charts/latest"
+      tags:
+        - helm
+
+
+    - name: Deploy or update Helm chart for Rancher
+      community.kubernetes.helm:
+        name: rancher
+        kubeconfig: /etc/rancher/rke2/rke2.yaml
+        chart_ref: rancher-latest/rancher
+        release_namespace: cattle-system
+        create_namespace: true
+        values:
+          hostname: rancher.carbide.aws.j2rsolutions.com  # Updated hostname
+          ingress:
+            tls:
+              source: tls-ingress-rancher
+          privateCA: true
+        state: present
+      tags:
+        - helm
+
+

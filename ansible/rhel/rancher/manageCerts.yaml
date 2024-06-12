@@ -1,0 +1,52 @@
+---
+- name: Manage Certificates and Kubernetes Secrets
+  hosts: rke2-servers-masters
+  become: yes
+  tasks:
+    - name: Copy certificate files to remote server
+      copy:
+        src: "/Users/jonathanspigler/J2RGit/ObsidianFlow/secrets/rancher/{{ item }}"
+        dest: "/opt/rkeSecrets/{{ item }}"
+      with_items:
+        - cert.pem
+        - chain.pem
+        - fullchain.pem
+        - privkey.pem
+
+    - name: Create TLS CA Secret YAML
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-ca
+            namespace: cattle-system
+          data:
+            ca.crt: "{{ lookup('file', '/opt/rkeSecrets/chain.pem') | b64encode }}"
+        dest: "/opt/rkeSecrets/tls-ca-secret.yaml"
+
+    - name: Create TLS Ingress Secret YAML
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-rancher-ingress
+            namespace: cattle-system
+          type: kubernetes.io/tls
+          data:
+            tls.crt: "{{ lookup('file', '/opt/rkeSecrets/fullchain.pem') | b64encode }}"
+            tls.key: "{{ lookup('file', '/opt/rkeSecrets/privkey.pem') | b64encode }}"
+        dest: "/opt/rkeSecrets/tls-ingress-secret.yaml"
+
+    - name: Apply TLS CA Secret to Kubernetes Cluster
+      community.kubernetes.k8s:
+        kubeconfig: "/etc/rancher/rke2/rke2.yaml"
+        state: present
+        definition: "{{ lookup('file', '/opt/rkeSecrets/tls-ca-secret.yaml') }}"
+
+    - name: Apply TLS Ingress Secret to Kubernetes Cluster
+      community.kubernetes.k8s:
+        kubeconfig: "/etc/rancher/rke2/rke2.yaml"
+        state: present
+        definition: "{{ lookup('file', '/opt/rkeSecrets/tls-ingress-secret.yaml') }}"

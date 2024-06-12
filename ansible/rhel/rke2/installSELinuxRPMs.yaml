@@ -1,0 +1,58 @@
+- name: Setup Private Registry and Load Images with Podman
+  hosts: rke2-servers-masters
+  become: yes
+  tasks:
+    - name: Install Podman and container-selinux
+      package:
+        name:
+          - podman
+          - container-selinux
+        state: present
+
+    - name: Install CNI plugins (if needed)
+      yum:
+        name: containernetworking-plugins
+        state: present
+      register: cni_plugins_installed
+      
+    - name: Disable nm-cloud-setup.service
+      systemd:
+        name: nm-cloud-setup.service
+        enabled: no
+        state: stopped
+
+    - name: Disable nm-cloud-setup.timer
+      systemd:
+        name: nm-cloud-setup.timer
+        enabled: no
+        state: stopped
+
+    - name: Set SELinux back to enforcing mode
+      selinux:
+        state: enforcing
+        policy: targeted
+      when: ansible_selinux.status == "enabled"
+
+    - name: Download RKE2 SELinux RPM package
+      get_url:
+        url: https://github.com/rancher/rke2-selinux/releases/download/v0.17.stable.1/rke2-selinux-0.17-1.el9.noarch.rpm
+        dest: /tmp/rke2-selinux-0.17-1.el9.noarch.rpm
+        mode: '0644'
+
+
+    - name: Install RKE2 SELinux RPM package using shell
+      ansible.builtin.shell: >
+        yum install -y /tmp/rke2-selinux-0.17-1.el9.noarch.rpm --disableplugin=gpgcheck
+      args:
+        executable: /bin/bash
+
+
+    - name: Verify RKE2 SELinux module installation
+      shell: semodule -l | grep rke2
+      register: semodule_check
+      failed_when: semodule_check.rc != 0
+
+    - name: Output result of SELinux module installation check
+      debug:
+        msg: "RKE2 SELinux policy installed successfully."
+      when: semodule_check.rc == 0

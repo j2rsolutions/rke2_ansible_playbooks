@@ -1,0 +1,40 @@
+---
+mirrors:
+  customreg:
+    endpoint:
+      - "http://172.0.1.140:5000"
+
+
+
+token: K101016f9706c32c19286bdbe90e03e77f68eb5b6cd2cc9af6d3f93016beab462d2::server:218eb23940d17c7034e054bf46249172
+tls-san:
+  - rancher.carbide.aws.j2rsolutions.com
+  - rkecontrolplane0.carbide.aws.j2rsolutions.com
+  - rkecontrolplane1.carbide.aws.j2rsolutions.com
+  - rkecontrolplane2.carbide.aws.j2rsolutions.com
+
+
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm fetch jetstack/cert-manager
+helm template ./cert-manager-.v1.13.3.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./cert-manager-images.txt
+
+
+helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+helm fetch rancher-stable/rancher
+
+
+
+curl -L -o cert-manager-crd.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.crds.yaml
+
+
+kubectl create namespace cert-manager
+
+kubectl apply -f cert-manager-crd.yaml
+
+helm install cert-manager ./cert-manager-v1.11.0.tgz \
+    --namespace cert-manager \
+    --set image.repository=172.0.1.140:5000/quay.io/jetstack/cert-manager-controller \
+    --set webhook.image.repository=172.0.1.140:5000/quay.io/jetstack/cert-manager-webhook \
+    --set cainjector.image.repository=172.0.1.140:5000/quay.io/jetstack/cert-manager-cainjector \
+    --set startupapicheck.image.repository=172.0.1.140:5000/quay.io/jetstack/cert-manager-ctl

@@ -1,0 +1,8 @@
+order of playbooks for first rancher server
+
+killanduninstall.yaml
+installSELinuxRPMs.yaml
+installCosignHelmHauler
+prepOfflineInstallTarBallMaster.yaml
+manageCerts.yaml
+deployRancher.yaml

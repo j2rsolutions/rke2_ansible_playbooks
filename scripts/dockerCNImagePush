@@ -1,0 +1,13 @@
+docker pull gcr.io/itp-ext-cnseries/10.2.0/pan_cn_mgmt_init:latest
+docker pull gcr.io/itp-ext-cnseries/10.2.0/pan_cni:latest
+docker pull gcr.io/itp-ext-cnseries/10.2.0/panos_cn_mgmt:latest
+docker pull gcr.io/itp-ext-cnseries/10.2.0/panos_cn_ngfw:latest
+
+docker tag gcr.io/itp-ext-cnseries/10.2.0/panos_cn_ngfw:latest localhost:5000/panos_cn_ngfw:10.2.0
+docker tag gcr.io/itp-ext-cnseries/10.2.0/panos_cn_mgmt localhost:5000/panos_cn_mgmt:10.2.0
+docker tag gcr.io/itp-ext-cnseries/10.2.0/pan_cn_mgmt_init  localhost:5000/pan_cn_mgmt_init:10.2.0
+docker tag gcr.io/itp-ext-cnseries/10.2.0/pan_cni localhost:5000/pan_cni:10.2.0
+
+docker push localhost:5000/panos_cn_mgmt:10.2.0
+docker push localhost:5000/pan_cn_mgmt_init:10.2.0
+docker push localhost:5000/pan_cni:10.2.0

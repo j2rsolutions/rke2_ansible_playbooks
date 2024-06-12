@@ -1,0 +1,96 @@
+---
+  - name: Install rke2 agent service
+    hosts: rke2-agents
+    become_user: root
+    become: true
+    tasks:
+      - name: Set ENV variable for rke2 agent install
+        ansible.builtin.shell: "echo $INSTALL_RKE2_TYPE"
+        environment:
+          INSTALL_RKE2_TYPE: agent
+
+      - name: Install the latest version of nftables (Ubuntu)
+        ansible.builtin.apt:
+          name: nftables
+          state: latest
+          update_cache: yes
+        tags:
+          - a
+
+      - name: Stop and disable firewalld (if applicable)
+        ansible.builtin.systemd:
+          name: firewalld
+          state: stopped
+          enabled: no 
+        ignore_errors: true
+        tags:
+          - a
+
+      - name: Start and enable nftables
+        ansible.builtin.systemd:
+          name: nftables 
+          state: started
+          enabled: yes
+        tags:
+          - a
+
+      - name: Install rke2-agent using install script (Ubuntu)
+        ansible.builtin.shell: curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent sh -
+        args:
+          executable: /bin/bash
+        tags:
+          - a
+
+      - name: Create /etc/rancher/rke2/config.yaml if doesn't exist
+        file:
+          path: /etc/rancher/rke2/config.yaml
+          state: touch
+        tags:
+          - a
+
+      - name: Insert/Update configuration block in /etc/rancher/rke2/config.yaml
+        ansible.builtin.blockinfile:
+          path: /etc/rancher/rke2/config.yaml
+          state: present
+          block: |
+            server: '{{ master_server }}'
+            token: '{{ node_token }}'
+        tags:
+          - a
+
+      - name: Enable and start service rke2-agent
+        ansible.builtin.systemd:
+          name: rke2-agent
+          state: started
+          enabled: yes
+        tags:
+            - x
+
+      - name: Dump journalctl for rke2-agent
+        ansible.builtin.shell: 'journalctl -u rke2-agent'
+        register: output
+        tags:
+          - x
+
+      - name: Print journalctl output
+        ansible.builtin.debug:
+          msg: '{{ output.stdout_lines }}'
+        tags:
+          - x
+
+      - name: Restart service rke2-agent.service 
+        ansible.builtin.systemd:
+          name: rke2-agent
+          state: restarted
+        tags:
+            - x
+
+      - name: Create a symbolic link for kubectl (if applicable)
+        ansible.builtin.file:
+          src: /var/lib/rancher/rke2/data/v1.18.20-rke2r1-8bc512ab9465/bin/kubectl
+          dest: /usr/bin/kubectl
+          owner: root 
+          group: root
+          state: link
+        tags:
+            - link

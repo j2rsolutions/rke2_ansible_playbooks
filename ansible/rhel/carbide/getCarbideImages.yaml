@@ -1,0 +1,26 @@
+---
+- name: Copy Carbide images to local registry
+  hosts: offline_rancher_bootstrap
+  vars:
+    token_id: ""
+    token_pw: ""
+    target_registry: "localhost:5000"
+    carbide_release: "0.1.1"
+    release_url: "https://github.com/rancherfederal/carbide-releases/releases/download/{{ carbide_release }}/carbide-images.txt"
+
+  tasks:
+    - name: Log into the source registry with cosign
+      shell: "cosign login -u {{ token_id }} -p {{ token_pw }} rgcrprod.azurecr.us"
+
+    - name: Get list of Carbide images
+      uri:
+        url: "{{ release_url }}"
+        return_content: yes
+      register: carbide_images_response
+
+    - name: Copy images to local registry
+      shell: |
+        source_image="{{ item }}"
+        dest_image="{{ item | replace('rgcrprod.azurecr.us', target_registry) }}"
+        cosign copy "${source_image}" "${dest_image}"
+      loop: "{{ carbide_images_response.content.split() }}"

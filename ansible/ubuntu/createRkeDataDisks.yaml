@@ -1,0 +1,54 @@
+---
+  - name: Create RKE Data Volume
+    hosts: all
+    become: true
+    strategy: free
+    tasks:
+      - name: install lvm2 and required packages
+        ansible.builtin.apt:
+          name:
+            - lvm2
+            - gcc
+            - nvme-cli
+            - xfsprogs
+          state: latest
+          update_cache: yes
+
+      - name: Create Volume Group vg_splunkdata
+        lvg:
+          pvs: "{{ disks }}"
+          vg: vg_rkedata
+
+      - name: Create a logical volume
+        lvol:
+          vg: vg_rkedata
+          lv: lv_rkedata
+          size: +100%FREE
+
+      - name: create file system for lv_rkedata
+        filesystem:
+          fstype: xfs
+          dev: /dev/vg_rkedata/lv_rkedata
+
+      - name: create data directory
+        file:
+           path: /rkedata
+           state: directory
+           owner: root
+           group: root
+           mode: 0755
+
+      - name: mount lv_splunkdata logical volume
+        mount:
+          name: /rkedata
+          src: /dev/vg_rkedata/lv_rkedata
+          fstype: xfs
+          state: mounted
+
+      - name: ensure data directory exists
+        file:
+           path: /rkedata
+           state: directory
+           owner: root
+           group: root
+           mode: 0755

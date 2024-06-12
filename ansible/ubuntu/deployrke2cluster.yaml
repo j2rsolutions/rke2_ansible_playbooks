@@ -1,0 +1,6 @@
+---
+  - import_playbook: fix-cni-stuff-rehl8.yaml
+  - import_playbook: install-rke2-master-service.yml
+  - import_playbook: install-rke2-server-service.yml
+  - import_playbook: install-rke2-agent-service.yml
+  - import_playbook: createMntDirectories.yaml

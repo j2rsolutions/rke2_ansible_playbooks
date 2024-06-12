@@ -1,0 +1,171 @@
+- name: Setup Private Registry and Load Images with Podman
+  hosts: offline_rancher_bootstrap
+  become: yes
+
+  vars:
+    RKE2_ARTIFACT_PATH: "/root/rke2-artifacts"
+    github_asset_urls:
+      - "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2-images.linux-amd64.tar.gz"
+      - "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2.linux-amd64.tar.gz"
+    images_list_url: "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2-images.linux-amd64.txt"
+    sha256sum_url: "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/sha256sum-amd64.txt"
+    registry_port: 5000  # Port for the private registry (customize if needed)
+    registry_directory: /rkedata/registry  # Directory to store registry data (customize if needed)
+
+  tasks:
+    - name: Install Podman
+      package:
+        name: podman
+        state: present
+
+    - name: Enable and start Podman 
+      systemd:
+        name: podman
+        enabled: yes
+        state: started
+
+
+    - name: Check Podman service status
+      service:
+        name: podman
+        state: started
+
+        
+    - name: Create directory for private registry and RKE2 artifacts
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ registry_directory }}"
+        - "{{ RKE2_ARTIFACT_PATH }}"
+
+    - name: Add localhost:5000 to /etc/containers/registries.conf
+      blockinfile:
+        path: /etc/containers/registries.conf
+        block: |
+          [[registry]]
+          prefix = "localhost:5000"
+          location = "localhost:5000"
+          insecure = true
+
+          [[registry]]
+          prefix = "172.0.1.140:5000"
+          location = "172.0.1.140:5000"
+          insecure = true
+        marker: "# {mark} ANSIBLE MANAGED BLOCK for localhost:5000"
+        insertafter: EOF
+      notify: restart podman service
+
+    - name: Set SELinux to permissive mode
+      selinux:
+        state: permissive
+        policy: targeted
+      when: ansible_selinux.status == "enabled"
+
+    - name: Set SELinux context for the registry directory
+      command: chcon -Rt container_file_t "{{ registry_directory }}"
+      when: ansible_selinux.status == "enabled"
+
+    - name: Set proper permissions on the registry directory
+      file:
+        path: "{{ registry_directory }}"
+        state: directory
+        owner: root  # Adjust the owner as needed
+        group: root  # Adjust the group as needed
+        mode: '0755'
+
+
+    # Rest of your tasks
+
+    - name: Set SELinux back to enforcing mode
+      selinux:
+        state: enforcing
+        policy: targeted
+      when: ansible_selinux.status == "enabled"
+
+
+
+    - name: Check if private registry container is running
+      shell: podman ps -a --filter "name=private_registry" --format "{{ '{{.Names}}' }}"
+      register: registry_container_status
+      changed_when: false
+
+    - name: Stop running private registry container
+      shell: podman stop private_registry
+      when: "'private_registry' in registry_container_status.stdout and 'Up' in registry_container_status.stdout"
+      ignore_errors: yes
+
+    - name: Remove existing private registry container if present
+      shell: podman rm private_registry
+      when: "'private_registry' in registry_container_status.stdout"
+      ignore_errors: true
+
+    # podman run --privileged -d --name registry -p 5000:5000 -v /rkedata/registry:/var/lib/registry --restart=always registry:2
+
+    - name: Run private registry container with Podman
+      shell: >
+        podman run --privileged -d --name private_registry -p {{ registry_port }}:5000 -v {{ registry_directory }}:/var/lib/registry --restart=always registry:2
+      when: "'private_registry' not in registry_container_status.stdout"
+
+    - name: Download GitHub assets
+      get_url:
+        url: "{{ item }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ item | regex_search('([^/]+)$') }}"
+      loop: "{{ github_asset_urls }}"
+      register: download_results
+      ignore_errors: yes
+
+    - name: Download list of images
+      get_url:
+        url: "{{ images_list_url }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ images_list_url | regex_search('([^/]+)$') }}"
+      register: images_list_download
+      when: download_results is succeeded
+
+    - name: Download SHA256 checksum file
+      get_url:
+        url: "{{ sha256sum_url }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ sha256sum_url | regex_search('([^/]+)$') }}"
+      register: sha256sum_download
+      when: download_results is succeeded
+
+    - name: Load images into Podman
+      shell: podman load -i "{{ RKE2_ARTIFACT_PATH }}/{{ item | regex_search('([^/]+)$') }}"
+      loop: "{{ github_asset_urls }}"
+      register: load_result
+      when: images_list_download is succeeded
+      ignore_errors: yes
+
+    - name: Get list of images
+      command: cat "{{ RKE2_ARTIFACT_PATH }}/{{ images_list_url | regex_search('([^/]+)$') }}"
+      register: images_list
+      ignore_errors: yes
+
+    - name: Tag and push images to private registry
+      shell: |
+        image_name="{{ item | regex_replace('^docker.io/', '') }}"
+        podman tag localhost/$image_name localhost:{{ registry_port }}/$image_name &&
+        podman push localhost:{{ registry_port }}/$image_name
+      loop: "{{ images_list.stdout_lines }}"
+      register: push_results
+      when: images_list is succeeded
+      ignore_errors: yes
+
+    - name: Display results of image push
+      debug:
+        msg: "Image {{ item.item }} push status: {{ 'Success' if item.rc == 0 else 'Failed' }}"
+      loop: "{{ push_results.results }}"
+      when: push_results is defined
+
+
+  handlers:
+    - name: Stop private registry container
+      command: podman stop private_registry
+      when: "'private_registry' in ansible_facts['containers_running']"
+
+    - name: restart podman service
+      systemd:
+        name: podman.socket
+        state: restarted
+        enabled: yes
+      when: ansible_service_mgr == "systemd"

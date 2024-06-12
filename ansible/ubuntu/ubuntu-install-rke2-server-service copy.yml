@@ -1,0 +1,125 @@
+---
+  - name: Install rke2 server service
+    hosts: rke2-servers
+    become_user: root
+    become: true
+    tasks:
+      # Ubuntu uses APT and doesn't require yum repo configurations. RKE2 installation can be done via a script.
+      - name: Install RKE2 server using the install script (Ubuntu)
+        ansible.builtin.shell: curl -sfL https://get.rke2.io | sh -
+        args:
+          executable: /bin/bash
+        tags:
+          - b
+
+          
+      - name: Install the latest version of nftables (Ubuntu)
+        ansible.builtin.apt:
+          name: nftables
+          state: latest
+          update_cache: yes
+        tags:
+          - a
+
+
+        # systemctl stop firewalld
+        # systemctl disable firewalld
+        # systemctl start nftables
+        # systemctl enable nftables
+
+      - name: Start and enable nftables
+        ansible.builtin.systemd:
+          name: nftables
+          state: started
+          enabled: yes
+        tags:
+          - a
+
+
+        # systemctl enable rke2-server.service
+
+        # systemctl start rke2-server.service
+
+
+      # Enable and start the RKE2 server service
+      - name: Enable and start rke2-server service
+        ansible.builtin.systemd:
+          name: rke2-server
+          state: started
+          enabled: yes
+        tags:
+            - x
+
+      - name: create /etc/rancher/rke2/config.yaml if doesn't exist
+        file:
+          path: /etc/rancher/rke2/config.yaml
+          state: touch
+        tags:
+          - a
+
+      # Configuration file creation and update
+      - name: Create and update RKE2 configuration files
+        ansible.builtin.blockinfile:
+          path: "{{ item.path }}"
+          state: present
+          block: "{{ item.block }}"
+        loop:
+          - path: /etc/rancher/rke2/config.yaml
+            block: |
+              server: '{{ master_server }}'
+              token: '{{ node_token }}'
+        tags:
+          - a
+
+
+      - name: start service rke2-server.service 
+        ansible.builtin.systemd:
+          name:  rke2-server
+          state: started
+        tags:
+            - x
+
+      # journalctl -u rke2-server -f
+
+      - name: dump jounralctl for rke2-server
+        ansible.builtin.shell: 'journalctl -u rke2-server'
+        register: output
+        tags:
+          - x
+
+      - name: print journalctl output
+        ansible.builtin.debug:
+          msg: '{{ output }}'
+        tags:
+          - x
+
+      - name: restart service rke2-server.service 
+        ansible.builtin.systemd:
+          name:  rke2-server
+          state: restarted
+        tags:
+            - x
+
+            
+
+      - name: Create a directory if it does not exist
+        ansible.builtin.file:
+          path: '{{ item }}'
+          state: directory
+          mode: '0755'
+        with_items:
+          - /mnt/pan-local1 
+          - /mnt/pan-local2
+          - /mnt/pan-local3
+          - /mnt/pan-local4
+          - /mnt/pan-local5
+          - /mnt/pan-local6 
+
+
+      - name: Create a symbolic link
+        ansible.builtin.file:
+          src: /var/lib/rancher/rke2/data/v1.18.20-rke2r1-8bc512ab9465/bin/kubectl
+          dest: /usr/bin/kubectl
+          owner: root 
+          group: root
+          state: link

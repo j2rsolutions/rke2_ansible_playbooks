@@ -1,0 +1,82 @@
+---
+- name: Install Cosign, Helm, and Hauler
+  hosts: offline_rancher_bootstrap
+  become: yes
+
+  vars:
+    cosign_version_url: "https://api.github.com/repos/sigstore/cosign/releases/latest"
+    helm_install_script: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+    hauler_version: "0.3.0"
+    hauler_url: "https://github.com/rancherfederal/hauler/releases/download/v{{ hauler_version }}/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+
+  tasks:
+    - name: Download Cosign binary
+      get_url:
+        url: "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+        dest: "/tmp/cosign-linux-amd64"
+        mode: '0755'  # Set file permission directly during download
+
+    - name: Move Cosign binary to /usr/local/bin
+      ansible.builtin.command:
+        cmd: "mv /tmp/cosign-linux-amd64 /usr/local/bin/cosign"
+      args:
+        creates: "/usr/local/bin/cosign"  # This prevents the task from running if cosign already exists at the destination
+
+    - name: Set permissions for Cosign binary
+      ansible.builtin.file:
+        path: "/usr/local/bin/cosign"
+        mode: '0755'
+        state: file
+
+
+    - name: Update PATH environment for this session
+      lineinfile:
+        path: /etc/environment
+        line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'
+        create: yes
+      become: yes
+
+    - name: Refresh environment variables
+      shell: source /etc/environment
+      args:
+        executable: /bin/bash
+
+    - name: Download and install Helm
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0755'
+
+    - name: Install Helm
+      command: /tmp/get_helm.sh
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+
+    - name: Verify Helm installation
+      command: /usr/local/bin/helm version --short
+      register: helm_version
+      failed_when: helm_version.rc != 0
+
+    - name: Output Helm version
+      debug:
+        msg: "Helm version installed: {{ helm_version.stdout }}"
+
+    - name: Create symlink for Helm in /usr/bin
+      file:
+        src: /usr/local/bin/helm
+        dest: /usr/bin/helm
+        state: link
+      become: yes
+
+
+    - name: Download Hauler
+      get_url:
+        url: "{{ hauler_url }}"
+        dest: "/tmp/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+
+    - name: Unarchive Hauler
+      ansible.builtin.unarchive:
+        src: "/tmp/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+        dest: "/usr/bin"
+        remote_src: yes
+        creates: /usr/bin/hauler

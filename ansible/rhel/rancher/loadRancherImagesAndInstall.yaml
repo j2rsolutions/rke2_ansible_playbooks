@@ -1,0 +1,16 @@
+---
+- name: Check for Completion of rancher-save-images Script
+  hosts: your_host_group
+  become: yes  # if required
+  vars:
+    download_path: "/rkedata/rancher-artifacts"  # Set your download path here
+    max_retries: 30  # Number of retries (30 retries * 20s delay = 600s / 10 minutes total)
+    delay_seconds: 20  # Delay in seconds between retries
+    registry_url: "localhost"
+    registry_port: "5000"
+
+  tasks:
+    - name: Execute Rancher Load Images Script
+      command: "./rancher-load-images.sh --image-list ./rancher-images.txt --registry {{ registry_url }}:{{ registry_port }}"
+      args:
+        chdir: "{{ download_path }}"  # Use the variable for the directory

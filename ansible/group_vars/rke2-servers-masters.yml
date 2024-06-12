@@ -1,0 +1,3 @@
+master_server: https://rkeserver0.rke.aws.j2rsolutions.local:9345
+node_token: K101016f9706c32c19286bdbe90e03e77f68eb5b6cd2cc9af6d3f93016beab462d2::server:218eb23940d17c7034e054bf46249172
+disks: "/dev/nvme1n1" 

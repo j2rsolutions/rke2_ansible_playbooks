@@ -1,0 +1,55 @@
+- name: Install Longhorn prerequisites on RHEL 9
+  hosts: rke2-servers, rke2-servers-masters
+  become: yes
+  tasks:
+    - name: Update apt cache and install open-iscsi
+      ansible.builtin.apt:
+        name: open-iscsi
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+
+    - name: Install open-iscsi on RHEL 9
+      ansible.builtin.dnf:
+        name: iscsi-initiator-utils
+        state: present
+      when: ansible_distribution == "RedHat" and ansible_distribution_major_version == "9"
+
+
+
+    - name: Ensure iscsid service is running and enabled
+      ansible.builtin.service:
+        name: iscsid
+        state: started
+        enabled: yes
+
+    - name: Ensure necessary utilities are installed (Red Hat-based)
+      ansible.builtin.dnf:
+        name:
+          - curl
+          - gawk
+          - jq
+        state: present
+      when: ansible_os_family == "RedHat"
+
+
+    - name: Ensure necessary utilities are installed
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gawk  # Assuming Debian/Ubuntu, where awk is provided by gawk
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install NFS client on Debian/Ubuntu
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install NFS client on RedHat/CentOS/Fedora
+      ansible.builtin.yum:
+        name: nfs-utils
+        state: present
+      when: ansible_os_family == "RedHat"

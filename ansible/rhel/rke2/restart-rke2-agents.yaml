@@ -1,0 +1,28 @@
+---
+    - name: restart rke2 agent service
+      hosts: rke2-agents
+      become_user: root
+      become: true
+      tasks:
+      - name: Enable service rke2-agent.service 
+        ansible.builtin.systemd:
+          name:  rke2-agent
+          state: restarted
+        tags: 
+          - restarted
+
+      - name: Enable service rke2-agent.service 
+        ansible.builtin.systemd:
+          name:  rke2-agent
+          state: stopped
+        tags: 
+          - stopped
+
+      - name: Enable service rke2-agent.service 
+        ansible.builtin.systemd:
+          name:  rke2-agent
+          state: started
+        tags: 
+          - started
+
+

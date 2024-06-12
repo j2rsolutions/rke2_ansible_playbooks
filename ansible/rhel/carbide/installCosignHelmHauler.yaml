@@ -1,0 +1,59 @@
+---
+- name: Install Cosign, Helm, and Hauler
+  hosts: offline_rancher_bootstrap
+  become: yes
+
+  vars:
+    cosign_version_url: "https://api.github.com/repos/sigstore/cosign/releases/latest"
+    helm_install_script: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+    hauler_version: "0.3.0"
+    hauler_url: "https://github.com/rancherfederal/hauler/releases/download/v{{ hauler_version }}/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+
+  tasks:
+    - name: Get the latest version of Cosign
+      command: "curl -s {{ cosign_version_url }}"
+      register: cosign_version_json
+      changed_when: false
+
+    - name: Extract version from JSON
+      shell: "echo '{{ cosign_version_json.stdout }}' | grep tag_name | cut -d : -f2 | tr -d 'v\", '"
+      register: cosign_version
+      changed_when: false
+
+    - name: Download Cosign RPM
+      get_url:
+        url: "https://github.com/sigstore/cosign/releases/latest/download/cosign-{{ cosign_version.stdout.strip() }}.x86_64.rpm"
+        dest: "/tmp/cosign-{{ cosign_version.stdout.strip() }}.x86_64.rpm"
+
+    - name: Install Cosign RPM
+      ansible.builtin.rpm_key:
+        state: present
+        src: "/tmp/cosign-{{ cosign_version.stdout.strip() }}.x86_64.rpm"
+
+    - name: Install Helm
+      get_url:
+        url: "{{ helm_install_script }}"
+        dest: "/tmp/get_helm.sh"
+        mode: '0700'
+
+    - name: Execute Helm installation script
+      command: sh /tmp/get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Verify Helm version
+      command: helm version
+      register: helm_version
+      changed_when: false
+
+    - name: Download Hauler
+      get_url:
+        url: "{{ hauler_url }}"
+        dest: "/tmp/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+
+    - name: Unarchive Hauler
+      ansible.builtin.unarchive:
+        src: "/tmp/hauler_{{ hauler_version }}_linux_amd64.tar.gz"
+        dest: "/usr/bin"
+        remote_src: yes
+        creates: /usr/bin/hauler

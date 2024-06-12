@@ -1,0 +1,64 @@
+---
+  - name: Get Kubernetes cluster info
+    hosts: rke2-servers-masters
+    become: true
+    tasks:
+
+      - name: Install required packages for Ubuntu
+        ansible.builtin.apt:
+          name:
+            - python3-pip
+            - lvm2
+            - gcc
+            - nvme-cli
+            - xfsprogs
+          state: latest
+          update_cache: yes
+
+      - name: Install Python Kubernetes package
+        ansible.builtin.pip:
+          name: kubernetes
+
+      - name: Create a k8s namespace
+        kubernetes.core.k8s:
+          name: cattle-system
+          api_version: v1
+          kind: Namespace
+          state: present
+          kubeconfig: /etc/rancher/rke2/rke2.yaml
+
+      - name: Copy non-cluster baseline .conf directories to DMC's apps directory
+        ansible.builtin.copy:
+          src: "../rancher/secrets/"
+          dest: "/opt/rkeSecrets/"
+          owner: root
+          group: root
+          mode: 0755
+
+      - name: Create private CA secret and ingress tls secret
+        kubernetes.core.k8s:
+          state: patched
+          kubeconfig: /etc/rancher/rke2/rke2.yaml
+          src: "{{ item }}"
+        loop:
+          - /opt/rkeSecrets/ca-secret.yaml
+          - /opt/rkeSecrets/ingress-secret.yaml
+        tags:
+          - secrets
+
+      - name: Install helm (Ubuntu)
+        ansible.builtin.shell: |
+          curl -LO https://get.helm.sh/helm-v3.11.0-rc.1-linux-amd64.tar.gz
+          tar -zxvf helm-v3.11.0-rc.1-linux-amd64.tar.gz
+          mv linux-amd64/helm /usr/local/bin/
+
+      - name: Add stable rancher repo
+        kubernetes.core.helm_repository:
+          name: latest
+          repo_url: "https://releases.rancher.com/server-charts/latest"
+        tags:
+          - helm
+
+      - name: Deploy helm chart
+        ansible.builtin.shell: |
+          helm upgrade rancher rancher-latest/rancher --namespace cattle-system --set hostname=rancher.rke.aws.j2rsolutions.io --set ingress.tls.source=tls-ingress-rancher --set privateCA=true

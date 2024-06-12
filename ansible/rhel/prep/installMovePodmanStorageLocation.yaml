@@ -1,0 +1,58 @@
+- name: Configure Podman Storage Location
+  hosts: all
+  become: yes
+  vars:
+    new_podman_storage_location: "/rkedata/podman/"  # Replace with your desired location
+
+  tasks:
+
+    - name: Install Podman
+      yum:
+        name: podman
+        state: present
+
+    - name: Enable and start Podman socket (for rootless container management)
+      systemd:
+        name: podman.socket
+        enabled: yes
+        state: started
+
+    - name: Check Podman service status
+      service:
+        name: podman
+        state: started
+
+    - name: Create new Podman storage directory
+      ansible.builtin.file:
+        path: "{{ new_podman_storage_location }}"
+        state: directory
+        mode: '0755'
+
+    - name: Stop Podman service
+      ansible.builtin.systemd:
+        name: podman
+        state: stopped
+      ignore_errors: true
+
+    - name: Backup current Podman storage configuration
+      ansible.builtin.command:
+        cmd: cp /etc/containers/storage.conf /etc/containers/storage.conf.backup
+
+    - name: Update Podman storage configuration
+      ansible.builtin.lineinfile:
+        path: /etc/containers/storage.conf
+        regexp: '^graphroot ='
+        line: 'graphroot = "{{ new_podman_storage_location }}"'
+        backrefs: yes
+
+    - name: Move existing Podman data to new location
+      ansible.builtin.command:
+        cmd: mv /var/lib/containers/* "{{ new_podman_storage_location }}/"
+      when: ansible_mounts[0].mount == '/var/lib/containers'
+      ignore_errors: true
+
+    - name: Restart Podman service
+      ansible.builtin.systemd:
+        name: podman
+        state: restarted
+      ignore_errors: true

@@ -1,0 +1,11 @@
+---
+  - name: kill and uninstall rke server and agents
+    hosts: rke2-servers, rke2-servers-masters, rke2-agents
+    become_user: root
+    become: true
+    tasks:
+      - name: Kill and Uninstall RKE2 server and agents
+        ansible.builtin.shell: |
+          /usr/bin/rke2-killall.sh 
+          /usr/bin/rke2-uninstall.sh 
+        ignore_errors: true

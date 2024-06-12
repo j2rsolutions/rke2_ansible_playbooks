@@ -1,0 +1,270 @@
+- name: Setup Private Registry and Load Images with Podman
+  hosts: rke2-servers-masters
+  become: yes
+
+  vars:
+    RKE2_ARTIFACT_PATH: "/root/rke2-artifacts"
+    github_asset_urls:
+      - "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2-images.linux-amd64.tar.gz"
+      - "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2.linux-amd64.tar.gz"
+    images_list_url: "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/rke2-images.linux-amd64.txt"
+    sha256sum_url: "https://github.com/rancher/rke2/releases/download/v1.26.12%2Brke2r1/sha256sum-amd64.txt"
+    registry_port: 5000  # Port for the private registry (customize if needed)
+    registry_directory: /rkedata/registry  # Directory to store registry data (customize if needed)
+    use_local_registry: false  # Set this to control the execution of registry related tasks
+
+  tasks:
+    - name: Install Podman and container-selinux
+      package:
+        name:
+          - podman
+          - container-selinux
+          - git
+          - selinux-policy-devel
+        state: present
+
+    - name: Install CNI plugins (if needed)
+      yum:
+        name: containernetworking-plugins
+        state: present
+      register: cni_plugins_installed
+
+    - name: Enable and start Podman 
+      systemd:
+        name: podman
+        enabled: yes
+        state: started
+
+    - name: Enable and start Podman socket (for rootless container management)
+      systemd:
+        name: podman.socket
+        enabled: yes
+        state: started
+
+    - name: Check Podman service status
+      service:
+        name: podman
+        state: started
+
+
+    - name: Disable nm-cloud-setup.service
+      systemd:
+        name: nm-cloud-setup.service
+        enabled: no
+        state: stopped
+
+    - name: Disable nm-cloud-setup.timer
+      systemd:
+        name: nm-cloud-setup.timer
+        enabled: no
+        state: stopped
+
+        
+    - name: Create directory for private registry and RKE2 artifacts
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ registry_directory }}"
+        - "{{ RKE2_ARTIFACT_PATH }}"
+
+    - name: Add localhost:5000 to /etc/containers/registries.conf
+      blockinfile:
+        path: /etc/containers/registries.conf
+        block: |
+          [[registry]]
+          prefix = "localhost:5000"
+          location = "localhost:5000"
+          insecure = true
+
+          [[registry]]
+          prefix = "172.0.1.140:5000"
+          location = "172.0.1.140:5000"
+          insecure = true
+        marker: "# {mark} ANSIBLE MANAGED BLOCK for localhost:5000"
+        insertafter: EOF
+      notify: restart podman service
+
+    - name: Set SELinux to permissive mode
+      selinux:
+        state: permissive
+        policy: targeted
+      when: ansible_selinux.status == "enabled"
+
+    - name: Set SELinux context for the registry directory
+      command: chcon -Rt container_file_t "{{ registry_directory }}"
+      when: ansible_selinux.status == "enabled"
+
+    # Rest of your tasks
+
+    - name: Set SELinux back to enforcing mode
+      selinux:
+        state: enforcing
+        policy: targeted
+      when: ansible_selinux.status == "enabled"
+
+
+    - name: Set proper permissions on the registry directory
+      file:
+        path: "{{ registry_directory }}"
+        state: directory
+        owner: root  # Adjust the owner as needed
+        group: root  # Adjust the group as needed
+        mode: '0700'
+
+    - name: Check if private registry container is running
+      shell: podman ps -a --filter "name=private_registry" --format "{{ '{{.Names}}' }}"
+      register: registry_container_status
+      changed_when: false
+      when: use_local_registry
+
+    - name: Stop running private registry container
+      shell: podman stop private_registry
+      when: >
+        use_local_registry and
+        'private_registry' in registry_container_status.stdout and
+        'Up' in registry_container_status.stdout
+      ignore_errors: yes
+
+    - name: Remove existing private registry container if present
+      shell: podman rm private_registry
+      when: use_local_registry and 'private_registry' in registry_container_status.stdout
+      ignore_errors: true
+
+    - name: Run private registry container with Podman
+      shell: >
+        podman run --privileged -d --name private_registry -p {{ registry_port }}:5000 -v {{ registry_directory }}:/var/lib/registry --restart=always registry:2
+      when: use_local_registry and 'private_registry' not in registry_container_status.stdout
+  
+    - name: Download RKE2 install script
+      shell: curl -sfL https://get.rke2.io --output /tmp/install.sh
+      register: rke2_script_download
+
+    - name: Download GitHub assets
+      get_url:
+        url: "{{ item }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ item | regex_search('([^/]+)$') }}"
+      loop: "{{ github_asset_urls }}"
+      register: download_results
+      ignore_errors: yes
+
+    - name: Download list of images
+      get_url:
+        url: "{{ images_list_url }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ images_list_url | regex_search('([^/]+)$') }}"
+      register: images_list_download
+      when: download_results is succeeded
+
+    - name: Download SHA256 checksum file
+      get_url:
+        url: "{{ sha256sum_url }}"
+        dest: "{{ RKE2_ARTIFACT_PATH }}/{{ sha256sum_url | regex_search('([^/]+)$') }}"
+      register: sha256sum_download
+      when: download_results is succeeded
+
+    - name: Load images into Podman
+      shell: podman load -i "{{ RKE2_ARTIFACT_PATH }}/{{ item | regex_search('([^/]+)$') }}"
+      loop: "{{ github_asset_urls }}"
+      register: load_result
+      when: images_list_download is succeeded
+      ignore_errors: yes
+
+    - name: Get list of images
+      command: cat "{{ RKE2_ARTIFACT_PATH }}/{{ images_list_url | regex_search('([^/]+)$') }}"
+      register: images_list
+      ignore_errors: yes
+
+    - name: Tag and push images to private registry
+      shell: |
+        image_name="{{ item | regex_replace('^docker.io/', '') }}"
+        podman tag localhost/$image_name localhost:{{ registry_port }}/$image_name &&
+        podman push localhost:{{ registry_port }}/$image_name
+      loop: "{{ images_list.stdout_lines }}"
+      register: push_results
+      when: use_local_registry and images_list is succeeded
+      ignore_errors: yes
+
+    - name: Display results of image push
+      debug:
+        msg: "Image {{ item.item }} push status: {{ 'Success' if item.rc == 0 else 'Failed' }}"
+      loop: "{{ push_results.results }}"
+      when: use_local_registry and push_results is defined
+
+    - name: Execute RKE2 install script
+      shell: >
+        RKE2_SELINUX=true
+        INSTALL_RKE2_ARTIFACT_PATH={{ RKE2_ARTIFACT_PATH }} sh /tmp/install.sh
+      when: images_list_download is succeeded
+
+    - name: Ensure the /etc/rancher/rke2 directory exists
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+        mode: '0755'
+
+    - name: Create config.yaml for rke2-server and allow selinux install
+      copy:
+        dest: /etc/rancher/rke2/config.yaml
+        content: |
+          selinux: true
+        mode: '0644'
+
+    - name: Download RKE2 SELinux RPM package
+      get_url:
+        url: https://github.com/rancher/rke2-selinux/releases/download/v0.17.stable.1/rke2-selinux-0.17-1.el9.noarch.rpm
+        dest: /tmp/rke2-selinux-0.17-1.el9.noarch.rpm
+        mode: '0644'
+
+    - name: Install RKE2 SELinux RPM package using shell
+      ansible.builtin.shell: >
+        yum install -y /tmp/rke2-selinux-0.17-1.el9.noarch.rpm --disableplugin=gpgcheck
+      args:
+        executable: /bin/bash
+
+
+    - name: Verify RKE2 SELinux module installation
+      shell: semodule -l | grep rke2
+      register: semodule_check
+      failed_when: semodule_check.rc != 0
+      tags:
+        - selinux
+
+    - name: Output result of SELinux module installation check
+      debug:
+        msg: "RKE2 SELinux policy installed successfully."
+      when: semodule_check.rc == 0
+
+
+    - name: Enable rke2-server service
+      systemd:
+        name: rke2-server
+        enabled: yes
+
+    - name: Start rke2-server service
+      systemd:
+        name: rke2-server
+        state: started
+
+    - name: Get RKE2 node-token
+      shell: cat /var/lib/rancher/rke2/server/node-token
+      register: node_token
+      ignore_errors: yes
+
+    - name: Display RKE2 node-token
+      debug:
+        msg: "Node token for {{ inventory_hostname }} is {{ node_token.stdout }}"
+        
+  handlers:
+    - name: Stop private registry container
+      command: podman stop private_registry
+      when: "'private_registry' in ansible_facts['containers_running']"
+
+    - name: restart podman service
+      systemd:
+        name: podman.socket
+        state: restarted
+        enabled: yes
+      when: ansible_service_mgr == "systemd"
+
+
+

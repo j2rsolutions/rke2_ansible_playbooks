@@ -1,0 +1,10 @@
+---
+  - name: disable AppArmor
+    hosts: all
+    become_user: root
+    become: true
+    tasks:
+
+      - name: Disable AppArmor
+        ansible.builtin.command:
+          cmd: service apparmor stop && update-rc.d -f apparmor remove

@@ -1,0 +1,3 @@
+master_server: https://172.0.1.166:9345
+node_token: K1095820cdc825d07ecb9d73167a1d1b875dccb96495099303092a2a4784bf0f911::server:f78d165b2f215d8891d1293db72905e3
+disks: "/dev/nvme1n1" 
